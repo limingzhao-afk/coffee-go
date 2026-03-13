@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Coffee Tracker Ultimate</title>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+body{font-family:Arial;background:#f4f4f4;margin:0;text-align:center;}
+header{background:#6f4e37;color:white;padding:15px;}
+button{background:#6f4e37;color:white;border:none;padding:8px 14px;margin:5px;border-radius:6px;cursor:pointer;}
+button:hover{background:#4e3626;}
+table{margin:auto;margin-top:20px;border-collapse:collapse;width:95%;background:white;}
+th,td{padding:8px;border:1px solid #ccc;text-align:center;}
+.highlight-today{background:#d4f8d4;} /* 登录用户当天记录 */
+.highlight-history{background:#fff8d4;} /* 登录用户历史记录 */
+.timeList{font-size:12px;color:#666;margin-top:2px;display:block;}
+#mainApp{display:none;}
+#loginPage{margin-top:50px;}
+#loginBox{background:#fff;padding:20px;border-radius:8px;box-shadow:0 0 10px #aaa;width:400px;margin:auto;}
+#newUserBox{display:none;margin-top:10px;}
+</style>
+</head>
+<body>
+
+<header>
+<h2>☕ Coffee Tracker Ultimate</h2>
+</header>
+
+<div id="loginPage">
+  <div id="loginBox">
+    <h3>Search Your Name</h3>
+    <input id="searchName" placeholder="Enter your name" oninput="filterUser()"><br>
+    <select id="loginName" size="6" style="width:100%; margin-top:5px;"></select><br>
+    <button onclick="login()">Login</button>
+  </div>
+
+  <div id="newUserBox">
+    <h3>New User Registration</h3>
+    <input id="newUser" placeholder="Enter your name"><br>
+    <button onclick="registerUser()">Register & Login</button>
+  </div>
+</div>
+
+<div id="mainApp">
+<h3 id="welcome"></h3>
+<label>Date:</label>
+<input type="date" id="coffeeDate"><br>
+<button onclick="drinkCoffee()">☕ I drink coffee</button>
+<button onclick="logout()">Logout</button>
+
+<h3>Daily Coffee Log</h3>
+<table id="dailyTable">
+<tr>
+<th>Date</th><th>Name</th><th>Cups</th><th>Times</th><th>€</th><th>Action</th>
+</tr>
+</table>
+
+<h3>Monthly Bill</h3>
+<select id="monthSelect"></select>
+<button onclick="showMonthly()">Show</button>
+<button onclick="exportMonthly()">Export Monthly Bill</button>
+<div id="monthlyTable"></div>
+</div>
+
+<script>
+const firebaseConfig={
+  apiKey:"AIzaSyA8IcXQrV2XUj9k66rKqYjw2CMa0aykZ5Y",
+  authDomain:"coffeetrackerultimate.firebaseapp.com",
+  projectId:"coffeetrackerultimate"
+};
+firebase.initializeApp(firebaseConfig);
+const db=firebase.firestore();
+
+let employees=[
+"Delle, Daniel","Eisenbart, Bernd","Grohmann, Florian","Herrmann, Mathias",
+"Hinrichs, Jörn","Kienmoser, Johannes","Meixner, Matthias","Späth, Tobias",
+"Steck, Thomas","Veh, Dominik","Wagner, Sebastian","Geissler, Leon",
+"Aytan, Ömer","Burgkart Rainer","Fritz, Steffen","Hechtl, Georg",
+"Hopf, Marie","Klaiber, Armin","Meyer-Kuckein, Nikola","Reicherzer, Alexander",
+"Schabert, Johann","Schuster, Klaus","Thiel, Christoph","Wagner, Franz-Josef",
+"Weinheimer, Julia","Wilhelmstätter, Ralf","Mayer, Arnd","Zhao, Liming","Bisgin, Sami"
+];
+const admins=["Zhao, Liming","Reicherzer, Alexander"];
+const coffeePrice=0.2;
+let currentUser=null;
+let isAdmin=false;
+
+// ==== Init UI ====
+function init(){
+  renderEmployeeList(employees);
+  let m=document.getElementById("monthSelect");
+  for(let i=1;i<=12;i++){ let o=document.createElement("option"); o.value=i; o.text=i; m.appendChild(o);}
+  m.value=new Date().getMonth()+1;
+  document.getElementById("coffeeDate").value=new Date().toISOString().split("T")[0];
+  const lastUser=localStorage.getItem("lastUser");
+  if(lastUser){document.getElementById("searchName").value=lastUser; filterUser();}
+}
+document.addEventListener("DOMContentLoaded",init);
+
+function renderEmployeeList(list){
+  let select=document.getElementById("loginName"); select.innerHTML="";
+  list.forEach(e=>{ let o=document.createElement("option"); o.value=e; o.text=e; select.appendChild(o); });
+}
+
+function filterUser(){
+  let key=document.getElementById("searchName").value.toLowerCase();
+  let filtered=employees.filter(e=>e.toLowerCase().includes(key));
+  if(filtered.length>0){ document.getElementById("loginBox").style.display="block"; document.getElementById("newUserBox").style.display="none"; renderEmployeeList(filtered);}
+  else{ document.getElementById("loginBox").style.display="none"; document.getElementById("newUserBox").style.display="block"; document.getElementById("newUser").value=document.getElementById("searchName").value;}
+}
+
+function login(){ 
+  let select=document.getElementById("loginName"); if(!select.value) return alert("Select a user.");
+  currentUser=select.value;
+  isAdmin=admins.includes(currentUser);
+  localStorage.setItem("lastUser", currentUser);
+  enterApp();
+}
+
+function registerUser(){ 
+  let name=document.getElementById("newUser").value.trim(); if(!name) return alert("Enter a name.");
+  employees.push(name); currentUser=name; isAdmin=false;
+  localStorage.setItem("lastUser", currentUser);
+  enterApp();
+}
+
+function enterApp(){ 
+  document.getElementById("loginPage").style.display="none";
+  document.getElementById("mainApp").style.display="block";
+  document.getElementById("welcome").innerText="Hello "+currentUser;
+  renderDaily();
+}
+
+function logout(){ location.reload(); }
+
+async function drinkCoffee(){
+  let d=document.getElementById("coffeeDate").value; if(!d) return;
+  let now=new Date();
+  let time=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+  let ref=db.collection("coffee").doc(d);
+  let doc=await ref.get();
+  let data=doc.exists?doc.data():{};
+  if(!data[currentUser]) data[currentUser]=[];
+  data[currentUser].push(time);
+  await ref.set(data);
+  renderDaily();
+}
+
+async function adjust(date,name,delta){
+  if(name!==currentUser && !isAdmin) return;
+  let ref=db.collection("coffee").doc(date);
+  let doc=await ref.get();
+  let data=doc.data();
+  if(!Array.isArray(data[name])) data[name]=[];
+  if(delta>0){ let now=new Date(); let time=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0"); data[name].push(time);}
+  else{ data[name].pop(); if(data[name].length===0) delete data[name]; }
+  await ref.set(data);
+  renderDaily();
+}
+
+// ==== Render Daily Log (美化版) ====
+async function renderDaily(){
+  let snap=await db.collection("coffee").get();
+  let table=document.getElementById("dailyTable");
+  table.innerHTML="<tr><th>Date</th><th>Name</th><th>Cups</th><th>Times</th><th>€</th><th>Action</th></tr>";
+
+  let today=new Date().toISOString().split("T")[0];
+  let rows=[];
+
+  snap.forEach(doc=>{
+    let date=doc.id;
+    let data=doc.data();
+    Object.keys(data).forEach(name=>{
+      let times=data[name];
+      if(!Array.isArray(times)) times=[String(times)];
+      rows.push({date,name,times});
+    });
+  });
+
+  // 排序：登录用户当天 -> 登录用户历史 -> 其他用户
+  rows.sort((a,b)=>{
+    if(a.name===currentUser && b.name!==currentUser) return -1;
+    if(b.name===currentUser && a.name!==currentUser) return 1;
+    if(a.name===currentUser && b.name===currentUser){
+      if(a.date===today && b.date!==today) return -1;
+      if(b.date===today && a.date!==today) return 1;
+      return b.date.localeCompare(a.date);
+    }
+    // 其他用户日期倒序
+    return b.date.localeCompare(a.date);
+  });
+
+  rows.forEach(r=>{
+    let action="";
+    if(r.name===currentUser || isAdmin){
+      action=`<button onclick="adjust('${r.date}','${r.name}',1)">+</button>
+              <button onclick="adjust('${r.date}','${r.name}',-1)">-</button>`;
+    }
+
+    // 背景样式
+    let cls="";
+    if(r.name===currentUser && r.date===today) cls="highlight-today";
+    else if(r.name===currentUser) cls="highlight-history";
+
+    table.innerHTML+=`<tr class="${cls}">
+      <td>${r.date}</td>
+      <td>${r.name}</td>
+      <td>${r.times.length}</td>
+      <td><span class="timeList">${r.times.join(", ")}</span></td>
+      <td>${(r.times.length*coffeePrice).toFixed(2)}</td>
+      <td>${action}</td>
+    </tr>`;
+  });
+}
+
+// ==== Monthly Bill ====
+async function showMonthly(){
+  let month=parseInt(document.getElementById("monthSelect").value);
+  let snap=await db.collection("coffee").get();
+  let totals={}; employees.forEach(e=>totals[e]=0);
+  snap.forEach(doc=>{
+    let m=parseInt(doc.id.split("-")[1]); if(m!==month) return;
+    let data=doc.data(); Object.keys(data).forEach(n=>{
+      totals[n]+=Array.isArray(data[n])?data[n].length:0;
+    });
+  });
+  let sorted=[...employees].filter(e=>e!==currentUser); sorted.unshift(currentUser);
+  let html="<table><tr><th>Name</th><th>Cups</th><th>Total €</th></tr>";
+  sorted.forEach(n=>{
+    html+=`<tr ${n===currentUser?'class="highlight-history"':''}><td>${n}</td><td>${totals[n]}</td><td>${(totals[n]*coffeePrice).toFixed(2)}</td></tr>`;
+  });
+  html+="</table>";
+  document.getElementById("monthlyTable").innerHTML=html;
+}
+
+async function exportMonthly(){
+  let month=parseInt(document.getElementById("monthSelect").value);
+  let snap=await db.collection("coffee").get(); let totals={}; employees.forEach(e=>totals[e]=0);
+  snap.forEach(doc=>{
+    let m=parseInt(doc.id.split("-")[1]); if(m!==month) return;
+    let data=doc.data(); Object.keys(data).forEach(n=>{
+      totals[n]+=Array.isArray(data[n])?data[n].length:0;
+    });
+  });
+  let rows=[]; let totalCups=0;
+  employees.forEach(n=>{
+    let cups=totals[n]; rows.push({Name:n,Cups:cups,Total_Euro:(cups*coffeePrice).toFixed(2)}); totalCups+=cups;
+  });
+  rows.push({Name:"TOTAL",Cups:totalCups,Total_Euro:(totalCups*coffeePrice).toFixed(2)});
+  let ws=XLSX.utils.json_to_sheet(rows); let wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Monthly Bill");
+  let year=new Date().getFullYear();
+  XLSX.writeFile(wb,`Coffee_Bill_${year}_${month}.xlsx`);
+}
+</script>
+
+</body>
+</html>
